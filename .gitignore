@@ -7,3 +7,6 @@ _sbuild/
 *.o
 *.a
 /z3_problems
+/c_emulator/gmp
+/c_emulator/zlib
+/c_emulator/SoftFloat-3e/build/Linux-x86_64-GCC/*.o.bc
