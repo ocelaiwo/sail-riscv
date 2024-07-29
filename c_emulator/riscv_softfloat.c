@@ -2,7 +2,16 @@
 #include "rts.h"
 #include "riscv_sail.h"
 #include "riscv_softfloat.h"
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 #include "softfloat.h"
+
+#ifdef __cplusplus
+}
+#endif
 
 static uint_fast8_t uint8_of_rm(mach_bits rm)
 {

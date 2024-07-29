@@ -11,6 +11,10 @@ struct zMisa {
 };
 extern struct zMisa zmisa;
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 void model_init(void);
 void model_fini(void);
 
@@ -22,6 +26,11 @@ unit ztick_platform(unit);
 unit z_set_Misa_C(struct zMisa *, mach_bits);
 unit z_set_Misa_D(struct zMisa *, mach_bits);
 unit z_set_Misa_F(struct zMisa *, mach_bits);
+
+#ifdef __cplusplus
+}
+#endif
+
 
 #ifdef RVFI_DII
 unit zext_rvfi_init(unit);
