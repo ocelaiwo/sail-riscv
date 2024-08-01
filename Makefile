@@ -147,6 +147,16 @@ LEM_DIR:=$(shell OPAMCLI=$(OPAMCLI) opam config var lem:share)
 endif
 export LEM_DIR
 
+ifneq ($(LLVM_COMPILER_PATH),)
+LLVM_CC=$(LLVM_COMPILER_PATH)/clang
+LLVM_CXX=$(LLVM_COMPILER_PATH)/clang++
+LLVM_LINK=$(LLVM_COMPILER_PATH)/llvm-link
+else
+LLVM_CC=clang
+LLVM_CXX=clang++
+LLVM_LINK=llvm-link
+endif
+
 C_WARNINGS ?=
 #-Wall -Wextra -Wno-unused-label -Wno-unused-parameter -Wno-unused-but-set-variable -Wno-unused-function
 C_INCS = $(addprefix c_emulator/,riscv_prelude.h riscv_platform_impl.h riscv_platform.h riscv_softfloat.h)
@@ -155,19 +165,26 @@ C_SRCS_EXP = $(addprefix c_emulator/,riscv_prelude.c riscv_platform_impl.c riscv
 
 SOFTFLOAT_DIR    = c_emulator/SoftFloat-3e
 SOFTFLOAT_INCDIR = $(SOFTFLOAT_DIR)/source/include
-SOFTFLOAT_LIBDIR = $(SOFTFLOAT_DIR)/build/Linux-RISCV-GCC
+SOFTFLOAT_LIBDIR = $(SOFTFLOAT_DIR)/build/Linux-x86_64-GCC
 SOFTFLOAT_FLAGS  = -I $(SOFTFLOAT_INCDIR)
 SOFTFLOAT_LIBS   = $(SOFTFLOAT_LIBDIR)/softfloat.a
-SOFTFLOAT_SPECIALIZE_TYPE = RISCV
+SOFTFLOAT_BCA    = $(SOFTFLOAT_LIBDIR)/softfloat.bca
 
-GMP_FLAGS = $(shell pkg-config --cflags gmp)
-# N.B. GMP does not have pkg-config metadata on Ubuntu 18.04 so default to -lgmp
-GMP_LIBS = $(shell pkg-config --libs gmp || echo -lgmp)
-ZLIB_FLAGS = $(shell pkg-config --cflags zlib)
-ZLIB_LIBS = $(shell pkg-config --libs zlib)
+GMP_DIR = c_emulator/gmp
+GMP_INCDIR = $(GMP_DIR)
+GMP_FLAGS = -I $(GMP_INCDIR)
+GMP_LIBS_DIR = $(GMP_DIR)/static
+GMP_BCA_DIR = $(GMP_DIR)/static_bc
+
+ZLIB_DIR = c_emulator/zlib
+ZLIB_INCDIR = $(ZLIB_DIR)
+ZLIB_FLAGS = -I $(ZLIB_INCDIR)
+ZLIB_LIBS = $(ZLIB_DIR)/libz.a
+ZLIB_BCA = $(ZLIB_DIR)/libz.bca
 
 C_FLAGS = -I $(SAIL_LIB_DIR) -I c_emulator $(GMP_FLAGS) $(ZLIB_FLAGS) $(SOFTFLOAT_FLAGS)
-C_LIBS  = $(GMP_LIBS) $(ZLIB_LIBS) $(SOFTFLOAT_LIBS)
+C_LIBS  = $(GMP_LIBS_DIR)/*.a $(ZLIB_LIBS) $(SOFTFLOAT_LIBS)
+C_BCA = $(GMP_BCA_DIR) $(ZLIB_BCA) $(SOFTFLOAT_BCA)
 
 # The C simulator can be built to be linked against Spike for tandem-verification.
 # This needs the C bindings to Spike from https://github.com/SRI-CSL/l3riscv
@@ -198,8 +215,6 @@ endif
 
 RISCV_EXTRAS_LEM_FILES = riscv_extras.lem mem_metadata.lem riscv_extras_fdext.lem
 RISCV_EXTRAS_LEM = $(addprefix handwritten_support/,$(RISCV_EXTRAS_LEM_FILES))
-
-SCR1_OBJECTS_FILES= riscv_exp.o 
 
 .PHONY:
 
@@ -273,8 +288,48 @@ generated_definitions/c2/riscv_model_$(ARCH).c: $(SAIL_SRCS) model/main.sail Mak
 	mkdir -p generated_definitions/c2
 	$(SAIL) $(SAIL_FLAGS) -no_warn -memo_z3 -config c_emulator/config.json -c2 $(SAIL_SRCS) -o $(basename $@)
 
+$(GMP_DIR):
+	cd c_emulator && tar -xf gmp.tar.xz
+
+$(ZLIB_DIR):
+	cd c_emulator && tar -xf zlib.tar.xz
+
 $(SOFTFLOAT_LIBS):
-	$(MAKE) SPECIALIZE_TYPE=$(SOFTFLOAT_SPECIALIZE_TYPE) -C $(SOFTFLOAT_LIBDIR)
+	$(MAKE) -C $(SOFTFLOAT_LIBDIR)
+
+$(GMP_LIBS_DIR): $(GMP_DIR)
+	cd $(GMP_DIR) && ./configure --disable-shared --disable-assembly
+	$(MAKE) -C $(GMP_DIR)
+	cd $(GMP_DIR) && sh static_archive.sh
+
+$(ZLIB_LIBS): $(ZLIB_DIR)
+	cd $(ZLIB_DIR) && ./configure
+	$(MAKE) -C $(ZLIB_DIR)
+
+$(SOFTFLOAT_BCA): export CC = wllvm
+$(SOFTFLOAT_BCA): export DEBUG_FLAG=-g
+
+$(GMP_BCA_DIR): export CC = wllvm
+$(GMP_BCA_DIR): export CFLAGS=-g
+
+$(ZLIB_BCA): export CC = wllvm
+$(ZLIB_BCA): export CFLAGS=-g
+
+$(SOFTFLOAT_BCA):
+	$(MAKE) -C $(SOFTFLOAT_LIBDIR)
+	extract-bc $(SOFTFLOAT_LIBS)
+
+$(GMP_BCA_DIR): $(GMP_DIR)
+	cd $(GMP_DIR) && ./configure --disable-shared --disable-assembly
+	$(MAKE) -C $(GMP_DIR)
+	cd $(GMP_DIR) && sh static_archive.sh
+	cd $(GMP_DIR) && sh extract_bc.sh
+
+$(ZLIB_BCA): $(ZLIB_DIR)
+	cd $(ZLIB_DIR) && ./configure
+	$(MAKE) -C $(ZLIB_DIR)
+	extract-bc $(ZLIB_LIBS)
+
 
 # convenience target
 .PHONY: csim
@@ -284,14 +339,27 @@ osim: ocaml_emulator/riscv_ocaml_sim_$(ARCH)
 .PHONY: rvfi
 rvfi: c_emulator/riscv_rvfi_$(ARCH)
 
-c_emulator/riscv_sim_$(ARCH): generated_definitions/c/riscv_model_$(ARCH).c $(C_INCS) $(C_SRCS) $(SOFTFLOAT_LIBS) Makefile
+c_emulator/riscv_sim_$(ARCH): generated_definitions/c/riscv_model_$(ARCH).c $(C_INCS) $(C_SRCS) $(SOFTFLOAT_LIBS) $(GMP_LIBS_DIR) $(ZLIB_LIBS) Makefile
 	$(CC) -g $(C_WARNINGS) $(C_FLAGS) $< $(C_SRCS) $(SAIL_LIB_DIR)/*.c $(C_LIBS) -o $@
 
-scr1_tandem/build/verilated.a:
+c_emulator/riscv_sim_$(ARCH).bc: generated_definitions/c/riscv_model_$(ARCH).c $(C_INCS) $(C_SRCS) $(SOFTFLOAT_BCA) $(GMP_BCA_DIR) $(ZLIB_BCA) Makefile
+	$(LLVM_CC) -g -c $(C_WARNINGS) $(C_FLAGS) $< $(C_SRCS) $(SAIL_LIB_DIR)/*.c
+	$(LLVM_LINK) *.o $(SOFTFLOAT_BCA) $(GMP_BCA_DIR)/* $(ZLIB_BCA) -o $@
+
+
+scr1_tandem/build/verilated.a: scr1_tandem/riscv_exp.c scr1_tandem/verilator.mk
 	cd scr1_tandem && $(MAKE) -f verilator.mk
 
-c_emulator/riscv_exp: generated_definitions/c/riscv_model_$(ARCH).c scr1_tandem/build/verilated.a $(C_INCS) $(C_SRCS_EXP) $(SOFTFLOAT_LIBS) Makefile
+scr1_tandem/build/verilated.bca: scr1_tandem/riscv_exp.c scr1_tandem/verilator.mk
+	cd scr1_tandem && $(MAKE) -f verilator.mk
+	cd scr1_tandem/build && extract-bc verilated.a
+
+c_emulator/riscv_exp: generated_definitions/c/riscv_model_$(ARCH).c scr1_tandem/build/verilated.a $(C_INCS) $(C_SRCS_EXP) $(SOFTFLOAT_LIBS) $(GMP_LIBS_DIR) $(ZLIB_LIBS) Makefile
 	$(CXX) -g $(C_WARNINGS) $(C_FLAGS) -I/usr/share/verilator/include -I/usr/share/verilator/vltstd $< $(C_SRCS_EXP) scr1_tandem/build/verilated.a  $(SAIL_LIB_DIR)/*.c $(C_LIBS) -o $@
+
+c_emulator/riscv_exp.bc: generated_definitions/c/riscv_model_$(ARCH).c scr1_tandem/build/verilated.bca $(C_INCS) $(C_SRCS_EXP) $(SOFTFLOAT_BCA) $(GMP_BCA_DIR) $(ZLIB_BCA) Makefile
+	$(LLVM_CXX) -g -c $(C_WARNINGS) $(C_FLAGS) -I/usr/share/verilator/include -I/usr/share/verilator/vltstd $< $(C_SRCS_EXP) $(SAIL_LIB_DIR)/*.c
+	$(LLVM_LINK) *.o $(SOFTFLOAT_BCA) $(GMP_BCA_DIR)/* $(ZLIB_BCA) scr1_tandem/build/verilated.bca -o $@
 
 # c_emulator/riscv_exp_$(ARCH): generated_definitions/c/riscv_model_$(ARCH).c
 
@@ -495,6 +563,10 @@ clean:
 	-rm -rf generated_definitions/lem/* generated_definitions/isabelle/* generated_definitions/hol4/* generated_definitions/coq/*
 	-rm -rf generated_definitions/for-rmem/*
 	-$(MAKE) -C $(SOFTFLOAT_LIBDIR) clean
+	-rm -rf c_emulator/SoftFloat-3e/build/Linux-x86_64-GCC/.*.bc
+	-rm -rf c_emulator/SoftFloat-3e/build/Linux-x86_64-GCC/softfloat.bca
+	-rm -rf $(GMP_DIR)
+	-rm -rf $(ZLIB_DIR)
 	-rm -f c_emulator/riscv_sim_RV32 c_emulator/riscv_sim_RV64  c_emulator/riscv_rvfi_RV32 c_emulator/riscv_rvfi_RV64 c_emulator/riscv_exp
 	-rm -rf ocaml_emulator/_sbuild ocaml_emulator/_build ocaml_emulator/riscv_ocaml_sim_RV32 ocaml_emulator/riscv_ocaml_sim_RV64 ocaml_emulator/tracecmp
 	-rm -f *.gcno *.gcda
@@ -505,4 +577,6 @@ clean:
 	-rm -f sail_doc/riscv_RV32.json
 	-rm -f sail_doc/riscv_RV64.json
 	-rm -rf scr1_tandem/build
+	-rm -f c_emulator/riscv_exp.bc
+	-rm -f elf.o riscv_model_RV32.o riscv_platform_impl.o riscv_platform.o riscv_prelude.o riscv_softfloat.o rts.o sail_failure.o sail.o
 	ocamlbuild -clean

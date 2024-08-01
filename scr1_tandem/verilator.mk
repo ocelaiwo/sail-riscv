@@ -16,6 +16,12 @@ rtl_top_list := $(addprefix $(rtl_src_dir)/,$(shell cat $(rtl_src_dir)/$(rtl_top
 rtl_tb_list := $(addprefix $(rtl_src_dir)/,$(shell cat $(rtl_src_dir)/$(rtl_tb_files)))
 sv_list := $(rtl_core_list) $(rtl_top_list) $(rtl_tb_list)
 
+FLAGS=-I.  -MMD -I/usr/share/verilator/include -I/usr/share/verilator/include/vltstd -DVM_COVERAGE=0 -DVM_SC=0 -faligned-new -fcf-protection=none -Wno-bool-operation -Wno-sign-compare -Wno-uninitialized -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-unused-variable -Wno-shadow -std=gnu++17 -I$(HOME)/.opam/default/share/sail/lib/ -I$(root_dir)/c_emulator -c
+
+ifdef KLEE_LIBCXX
+	FLAGS += -nostdinc++ -I $(KLEE_LIBCXX)
+endif
+
 .PHONY: verilate
 
 all: $(build_dir)/verilated.a
@@ -30,17 +36,11 @@ verilate: riscv_exp.c $(sv_list)
 	-Wno-fatal \
 	--top-module $(top_module) \
 	-DSCR1_TRGT_SIMULATION \
-	-CFLAGS -DVCD_TRACE -CFLAGS -DTRACE_LVLV=20 \
-	-CFLAGS -DVCD_FNAME=simx.vcd \
 	--clk clk \
 	--exe $(tandem_dir)/riscv_exp.c \
-	--trace \
-	--trace-params \
-    --trace-structs \
 	--no-threads    \
     --no-timing     \
 	--fno-merge-const-pool -x-assign fast -x-initial fast --noassert \
-    --trace-underscore \
 	--Mdir . \
 	-I$(rtl_inc_dir) \
 	-I$(rtl_inc_tb_dir) \
@@ -48,13 +48,10 @@ verilate: riscv_exp.c $(sv_list)
 	$(SIM_BUILD_OPTS) \
 	$(sv_list); \
 
-
-
 $(build_dir)/verilated.a: verilate $(tandem_dir)/riscv_exp.c
 	cd $(build_dir); \
-	$(CXX)  -I.  -MMD -I/usr/share/verilator/include -I/usr/share/verilator/include/vltstd -DVM_COVERAGE=0 -DVM_SC=0 -DVM_TRACE=1 -DVM_TRACE_FST=0 -DVM_TRACE_VCD=1 -faligned-new -fcf-protection=none -Wno-bool-operation -Wno-sign-compare -Wno-uninitialized -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-unused-variable -Wno-shadow     -DVCD_TRACE -DTRACE_LVLV=20 -DVCD_FNAME=simx.vcd  -std=gnu++17 -I$(HOME)/.opam/default/share/sail/lib/ -I$(root_dir)/c_emulator -c -o riscv_exp.o $(tandem_dir)/riscv_exp.c; \
-	$(CXX)  -I.  -MMD -I/usr/share/verilator/include -I/usr/share/verilator/include/vltstd -DVM_COVERAGE=0 -DVM_SC=0 -DVM_TRACE=1 -DVM_TRACE_FST=0 -DVM_TRACE_VCD=1 -faligned-new -fcf-protection=none -Wno-bool-operation -Wno-sign-compare -Wno-uninitialized -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-unused-variable -Wno-shadow     -DVCD_TRACE -DTRACE_LVLV=20 -DVCD_FNAME=simx.vcd  -std=gnu++17 -I$(HOME)/.opam/default/share/sail/lib/ -I$(root_dir)/c_emulator -c -o verilated.o /usr/share/verilator/include/verilated.cpp; \
-	$(CXX)  -I.  -MMD -I/usr/share/verilator/include -I/usr/share/verilator/include/vltstd -DVM_COVERAGE=0 -DVM_SC=0 -DVM_TRACE=1 -DVM_TRACE_FST=0 -DVM_TRACE_VCD=1 -faligned-new -fcf-protection=none -Wno-bool-operation -Wno-sign-compare -Wno-uninitialized -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-unused-variable -Wno-shadow     -DVCD_TRACE -DTRACE_LVLV=20 -DVCD_FNAME=simx.vcd  -std=gnu++17 -I$(HOME)/.opam/default/share/sail/lib/ -I$(root_dir)/c_emulator -c -o verilated_dpi.o /usr/share/verilator/include/verilated_dpi.cpp; \
-	$(CXX)  -I.  -MMD -I/usr/share/verilator/include -I/usr/share/verilator/include/vltstd -DVM_COVERAGE=0 -DVM_SC=0 -DVM_TRACE=1 -DVM_TRACE_FST=0 -DVM_TRACE_VCD=1 -faligned-new -fcf-protection=none -Wno-bool-operation -Wno-sign-compare -Wno-uninitialized -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-unused-variable -Wno-shadow     -DVCD_TRACE -DTRACE_LVLV=20 -DVCD_FNAME=simx.vcd  -std=gnu++17 -I$(HOME)/.opam/default/share/sail/lib/ -I$(root_dir)/c_emulator -c -o verilated_vcd_c.o /usr/share/verilator/include/verilated_vcd_c.cpp; \
-	$(CXX)  -I.  -MMD -I/usr/share/verilator/include -I/usr/share/verilator/include/vltstd -DVM_COVERAGE=0 -DVM_SC=0 -DVM_TRACE=1 -DVM_TRACE_FST=0 -DVM_TRACE_VCD=1 -faligned-new -fcf-protection=none -Wno-bool-operation -Wno-sign-compare -Wno-uninitialized -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-unused-variable -Wno-shadow     -DVCD_TRACE -DTRACE_LVLV=20 -DVCD_FNAME=simx.vcd  -std=gnu++17 -I$(HOME)/.opam/default/share/sail/lib/ -I$(root_dir)/c_emulator -c *.cpp; \
+	$(CXX) $(FLAGS) -o riscv_exp.o $(tandem_dir)/riscv_exp.c; \
+	$(CXX) $(FLAGS) -o verilated.o /usr/share/verilator/include/verilated.cpp; \
+	$(CXX) $(FLAGS) -o verilated_dpi.o /usr/share/verilator/include/verilated_dpi.cpp; \
+	$(CXX) $(FLAGS) *.cpp; \
 	ar -rcs verilated.a *.o
