@@ -16,7 +16,7 @@ rtl_top_list := $(addprefix $(rtl_src_dir)/,$(shell cat $(rtl_src_dir)/$(rtl_top
 rtl_tb_list := $(addprefix $(rtl_src_dir)/,$(shell cat $(rtl_src_dir)/$(rtl_tb_files)))
 sv_list := $(rtl_core_list) $(rtl_top_list) $(rtl_tb_list)
 
-FLAGS=-I.  -MMD -I/usr/share/verilator/include -I/usr/share/verilator/include/vltstd -DVM_COVERAGE=0 -DVM_SC=0 -faligned-new -fcf-protection=none -Wno-bool-operation -Wno-sign-compare -Wno-uninitialized -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-unused-variable -Wno-shadow -std=gnu++17 -I$(HOME)/.opam/default/share/sail/lib/ -I$(root_dir)/c_emulator -c
+FLAGS=-I.  -MMD -I/usr/share/verilator/include -I/usr/share/verilator/include/vltstd -DVM_COVERAGE=0 -DVM_SC=0 -faligned-new -fcf-protection=none -Wno-bool-operation -Wno-sign-compare -Wno-uninitialized -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-unused-variable -Wno-shadow -std=gnu++17 -I$(HOME)/Workspace/sail/lib/fixed -I$(root_dir)/c_emulator -c
 
 ifdef KLEE_LIBCXX
 	FLAGS += -nostdinc++ -I $(KLEE_LIBCXX)
@@ -26,7 +26,7 @@ endif
 
 all: $(build_dir)/verilated.a
 
-verilate: riscv_exp.c $(sv_list)
+verilate: new_harness.c $(sv_list)
 	mkdir -p $(build_dir); \
 	cd $(build_dir); \
 	verilator \
@@ -37,20 +37,20 @@ verilate: riscv_exp.c $(sv_list)
 	--top-module $(top_module) \
 	-DSCR1_TRGT_SIMULATION \
 	--clk clk \
-	--exe $(tandem_dir)/riscv_exp.c \
+	--exe $(tandem_dir)/new_harness.c \
 	--no-threads    \
     --no-timing     \
 	--fno-merge-const-pool -x-assign fast -x-initial fast --noassert \
 	--Mdir . \
 	-I$(rtl_inc_dir) \
 	-I$(rtl_inc_tb_dir) \
-	-I$(HOME)/.opam/default/share/sail/lib/ \
+	-I$(HOME)/Workspace/sail/lib/fixed/ \
 	$(SIM_BUILD_OPTS) \
 	$(sv_list); \
 
-$(build_dir)/verilated.a: verilate $(tandem_dir)/riscv_exp.c
+$(build_dir)/verilated.a: verilate $(tandem_dir)/new_harness.c
 	cd $(build_dir); \
-	$(CXX) $(FLAGS) -o riscv_exp.o $(tandem_dir)/riscv_exp.c; \
+	$(CXX) $(FLAGS) -o new_harness.o $(tandem_dir)/new_harness.c; \
 	$(CXX) $(FLAGS) -o verilated.o /usr/share/verilator/include/verilated.cpp; \
 	$(CXX) $(FLAGS) -o verilated_dpi.o /usr/share/verilator/include/verilated_dpi.cpp; \
 	$(CXX) $(FLAGS) *.cpp; \

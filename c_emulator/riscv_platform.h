@@ -37,7 +37,7 @@ unit load_reservation(mach_bits);
 bool match_reservation(mach_bits);
 unit cancel_reservation(unit);
 
-void plat_insns_per_tick(sail_int *rop, unit);
+sail_int plat_insns_per_tick(unit);
 
 unit plat_term_write(mach_bits);
 mach_bits plat_htif_tohost(unit);
