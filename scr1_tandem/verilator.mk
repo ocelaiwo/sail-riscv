@@ -50,8 +50,8 @@ verilate: new_harness.c $(sv_list)
 
 $(build_dir)/verilated.a: verilate $(tandem_dir)/new_harness.c
 	cd $(build_dir); \
-	$(CXX) $(FLAGS) -o new_harness.o $(tandem_dir)/new_harness.c; \
-	$(CXX) $(FLAGS) -o verilated.o /usr/share/verilator/include/verilated.cpp; \
-	$(CXX) $(FLAGS) -o verilated_dpi.o /usr/share/verilator/include/verilated_dpi.cpp; \
+	$(CXX) $(FLAGS) -g -o new_harness.o $(tandem_dir)/new_harness.c; \
+	$(CXX) $(FLAGS) -g -o verilated.o /usr/share/verilator/include/verilated.cpp; \
+	$(CXX) $(FLAGS) -g -o verilated_dpi.o /usr/share/verilator/include/verilated_dpi.cpp; \
 	$(CXX) $(FLAGS) *.cpp; \
 	ar -rcs verilated.a *.o

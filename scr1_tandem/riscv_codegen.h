@@ -325,7 +325,7 @@ enum {
 		             ((funct3) << 12) | \
 		             ((rs1) << 15) | \
 		             ((rs2) << 20) | \
-		             ((funct7) << 25)); \
+		             ((funct7) << 25)) \
 
 /*
  * The R4-type encoding is used for floating point fused multiply-add
@@ -347,7 +347,7 @@ enum {
 	                 ((rs1) << 15) | \
  	                 ((rs2) << 20) | \
 		             ((funct2) << 25) | \
-		             ((rs3) << 27)); \
+		             ((rs3) << 27)) \
 
 /*
  * The I-type encoding is used for a variety of instructions, such as JALR,
@@ -365,7 +365,7 @@ enum {
 		             ((rd) << 7) | \
 		             ((funct3) << 12) | \
 		             ((rs1) << 15) | \
-		             (RISCV_ENCODE_I_IMM ((int32_t) (imm)))); \
+		             (RISCV_ENCODE_I_IMM ((int32_t) (imm)))) \
 
 /*
  * This is a specialization of the I-type encoding used for shifts by immediate
@@ -386,7 +386,7 @@ enum {
 		             ((funct3) << 12) | \
 		             ((rs1) << 15) | \
 		             (RISCV_BITS ((shamt), 0, 5) << 20) | \
-		             ((rstype) << 25)); \
+		             ((rstype) << 25)) \
 
 /*
  * A further specialization of the I-type encoding used for shifts by immediate
@@ -406,7 +406,7 @@ enum {
 		             ((funct3) << 12) | \
 		             ((rs1) << 15) | \
 		             (RISCV_BITS ((shamt), 0, 6) << 20) | \
-		             ((rstype) << 26)); \
+		             ((rstype) << 26)) \
 
 /*
  * This is a specialization of the I-type encoding used for accessing control
@@ -424,7 +424,7 @@ enum {
 		             ((rd) << 7) | \
 		             ((funct3) << 12) | \
 		             ((rs1) << 15) | \
-		             (RISCV_BITS ((csr), 0, 12) << 20)); \
+		             (RISCV_BITS ((csr), 0, 12) << 20)) \
 
 /*
  * The S-type encoding is used for stores with signed offsets.
@@ -442,7 +442,7 @@ enum {
 		             ((funct3) << 12) | \
 		             ((rs1) << 15) | \
 		             ((rs2) << 20) | \
-		             (RISCV_ENCODE_S_IMM ((int32_t) (imm)))); \
+		             (RISCV_ENCODE_S_IMM ((int32_t) (imm)))) \
 
 /*
  * The B-type encoding is used for conditional branches with signed offsets.
@@ -462,7 +462,7 @@ enum {
 		             ((funct3) << 12) | \
 		             ((rs1) << 15) | \
 		             ((rs2) << 20) | \
-		             (RISCV_ENCODE_B_IMM ((int32_t) (imm)))); \
+		             (RISCV_ENCODE_B_IMM ((int32_t) (imm)))) \
 
 /*
  * The U-type encoding is used for LUI and AUIPC only, i.e. for instructions
@@ -476,7 +476,7 @@ enum {
 #define _riscv_u_op(opcode, rd, imm) \
 		_riscv_emit (((opcode) << 0) | \
 		             ((rd) << 7) | \
-		             (RISCV_ENCODE_U_IMM ((uint32_t) (imm)))); \
+		             (RISCV_ENCODE_U_IMM ((uint32_t) (imm)))) \
 
 /*
  * The J-type encoding is used exclusively for JAL.
@@ -492,7 +492,7 @@ enum {
 #define _riscv_j_op(opcode, rd, imm) \
 		_riscv_emit (((opcode) << 0) | \
 		             ((rd) << 7) | \
-		             (RISCV_ENCODE_J_IMM ((int32_t) (imm)))); \
+		             (RISCV_ENCODE_J_IMM ((int32_t) (imm)))) \
 
 /*
  * Fence instructions have a peculiar encoding that isn't quite like any of the
@@ -514,7 +514,7 @@ enum {
 		             ((rs1) << 15) | \
 		             (RISCV_BITS ((succ), 0, 4) << 20) | \
 		             (RISCV_BITS ((pred), 0, 4) << 24) | \
-		             (RISCV_BITS ((uint32_t) (imm), 0, 4) << 28)); \
+		             (RISCV_BITS ((uint32_t) (imm), 0, 4) << 28)) \
 
 /*
  * Atomic instructions have a peculiar encoding that isn't quite like any of
@@ -536,7 +536,7 @@ enum {
 		             ((rs1) << 15) | \
 		             ((rs2) << 20) | \
 		             (RISCV_BITS ((ordering), 0, 2) << 25) | \
-		             ((funct5) << 27)); \
+		             ((funct5) << 27)) \
 
 /*
  * NOTE: When you add new codegen macros or change existing ones, you must

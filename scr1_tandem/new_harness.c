@@ -1,9 +1,9 @@
+// -*- mode: c++ -*-
+
 #include <cstdint>
-#include <ctype.h>
 #include <getopt.h>
 #include <stdio.h>
 #include <stdlib.h>
-#include <errno.h>
 #include <unistd.h>
 #include <arpa/inet.h>
 #include <sys/types.h>
@@ -14,11 +14,9 @@
 #include <netinet/ip.h>
 #include <fcntl.h>
 
-#include "elf.h"
 #include "sail.h"
 #include "rts.h"
 
-#include "riscv_platform.h"
 #include "riscv_platform_impl.h"
 #include "riscv_sail.h"
 
@@ -197,193 +195,103 @@ uint32_t rtl_read_mem(uint32_t address, uint8_t size)
   return ret;
 }
 
-constexpr size_t MEMORY_LEN = 0x500;
-unsigned char memory[MEMORY_LEN];
+constexpr size_t MAX_INSTRS = 20;
+constexpr size_t INSTR_BYTE_WIDTH = 4;
 
-constexpr size_t FETCH_START = 0x200;
-constexpr size_t FETCH_END = 0x250;
+unsigned char instr_memory[MAX_INSTRS * INSTR_BYTE_WIDTH];
+
+
+constexpr size_t INSTR_START = 0x200;
+constexpr size_t DATA_START = INSTR_START + MAX_INSTRS * INSTR_BYTE_WIDTH;
+constexpr size_t DATA_SIZE = 0x500;
 
 struct state {
   uint32_t GPRs[32];
 };
 
-void run_scr1() {
-  bool do_write = false;
-  uint32_t haddr;
-  uint32_t hwdata;
-  uint8_t hsize;
+
+state run_scr1() {
+  uint8_t dmem_htrans[2] = {IDLE, IDLE};
+  uint32_t dmem_haddr[2];
+  uint8_t dmem_hsize[2];
+  uint32_t dmem_hwdata[2];
+  uint8_t dmem_hwrite[2];
 
   size_t read_insts = 0;
-  size_t unwind_count = 0;
+  int register_dump = RISCV_X0;
+  state state;
 
   while (true) {
-    auto clk_posedge = top->clk;
-
-    if (read_insts == insn_limit) {
-      unwind_count++;
-      if (unwind_count == 4) {
-        break;
-      }
-    }
-
     if (top->clk) {
-      top->imem_hrdata = 0;
-
-      switch (top->imem_htrans) {
-      case IDLE: {
+      // imem read
+      if (top->imem_htrans == NONSEQ) {
+        fprintf(stderr, "requesting address %u\n", top->imem_haddr);
+        if (read_insts == insn_limit) {
+          if (register_dump <= RISCV_X31) {
+            top->imem_hrdata = riscv_sw(register_dump, RISCV_X0, register_dump * 4);
+            fprintf(stderr, "dump register %u instruction fed\n", register_dump);
+            ++register_dump;
+          } else {
+            // NOP
+            fprintf(stderr, "inserting NOP\n");
+            top->imem_hrdata = riscv_addi(RISCV_X0, RISCV_X0, 0);
+          }
+        } else {
+          top->imem_hrdata = rtl_read_mem(top->imem_haddr, top->imem_hsize);
+          fprintf(stderr, "read imem: %u at address %u\n", top->imem_hrdata, top->imem_haddr);
+        }
         top->imem_hresp = 0;
         top->imem_hready = 1;
-        break;
-      }
-      case NONSEQ: {
-        if (read_insts == insn_limit) {
-          top->imem_hresp = 0;
-          top->imem_hready = 0;
-        } else {
+        if (read_insts != insn_limit) {
           read_insts++;
-          top->imem_hrdata = rtl_read_mem(top->imem_haddr, top->imem_hsize);
-          haddr = top->imem_haddr;
-          hsize = top->imem_hsize;
-          top->imem_hready = 1;
-          top->imem_hresp = 0;
         }
-        break;
-      }
-      default: {
-        exit(1);
-      }
-      }
-    }
-
-    if (top->clk) {
-      if (do_write) {
-        do_write = false;
-        if (haddr == 0x80001000) {
-          printf("SUCCESS\n");
-          break; // Break from outer loop
-        } else if (haddr == SCR1_SIM_PRINT_ADDR) {
-          printf("%c", top->dmem_hwdata);
-        } else {
-          /* memwrite(haddr, top->dmem_hwdata, hsize); */
-          rtl_write_mem(haddr, top->dmem_hwdata, hsize);
-        }
+      } else {
+        assert(top->imem_htrans == IDLE);
+        top->imem_hresp = 0;
+        top->imem_hready = 1;
       }
 
-      switch (top->dmem_htrans) {
-      case IDLE: {
+      dmem_htrans[0] = dmem_htrans[1];
+      dmem_haddr[0] = dmem_haddr[1];
+      dmem_hsize[0] = dmem_hsize[1];
+      dmem_hwdata[0] = dmem_hwdata[1];
+      dmem_hwrite[0] = dmem_hwrite[1];
+
+      dmem_htrans[1] = top->dmem_htrans;
+      dmem_haddr[1] = top->dmem_haddr;
+      dmem_hsize[1] = top->dmem_hsize;
+      dmem_hwdata[1] = top->dmem_hwdata;
+      dmem_hwrite[1] = top->dmem_hwrite;
+
+      // dmem read and write
+      if (dmem_htrans[1] == NONSEQ && dmem_hwrite[1] == 0) {
+        top->dmem_hrdata = rtl_read_mem(dmem_haddr[1], dmem_hsize[1]);
+        fprintf(stderr, "read dmem: %u at address %u\n", top->dmem_hrdata, dmem_haddr[1]);
         top->dmem_hresp = 0;
         top->dmem_hready = 1;
-        break;
-      }
-      case NONSEQ: {
-        if (!top->dmem_hwrite) {
-          /* top->dmem_hrdata = memread(top->dmem_haddr, top->dmem_hsize); */
-          top->dmem_hrdata = rtl_read_mem(top->dmem_haddr, top->dmem_hsize);
-          top->dmem_hresp = 0;
-          top->dmem_hready = 1;
+      } else if (dmem_htrans[0] == NONSEQ && dmem_hwrite[0] == 1) {
+        uint32_t reg = (dmem_haddr[0]) / 4;
+        if (reg >= RISCV_X0 && reg <= RISCV_X31) {
+          fprintf(stderr, "dumping register %u\n", reg);
+          state.GPRs[reg] = dmem_hwdata[1];
+          if (reg == RISCV_X31) {
+            break;
+          }
         } else {
-          do_write = true;
-          haddr = top->dmem_haddr;
-          hsize = top->dmem_hsize;
-          top->dmem_hresp = 0;
-          top->dmem_hready = 1;
+          rtl_write_mem(dmem_haddr[0], dmem_hwdata[1], dmem_hsize[0]);
+          fprintf(stderr, "wrote dmem: %u to address %u\n", dmem_hwdata[1],
+                  dmem_haddr[0]);
         }
-        break;
-      }
-      default: {
-        exit(1);
-      }
+        top->dmem_hresp = 0;
+        top->dmem_hready = 1;
+      } else {
+        top->dmem_hresp = 0;
+        top->dmem_hready = 1;
       }
     }
-
     top->clk = !top->clk;
     top->eval();
   }
-}
-
-state read_scr1_state() {
-  state state;
-  bool do_write = false;
-  uint32_t haddr;
-  uint32_t hwdata;
-  uint8_t hsize;
-
-  for (int i = RISCV_X0; i <= RISCV_X31; ++i) {
-    bool written = false;
-    while (true) {
-      auto clk_posedge = top->clk;
-
-      if (top->clk) {
-        top->imem_hrdata = 0;
-
-        switch (top->imem_htrans) {
-        case IDLE: {
-          top->imem_hresp = 0;
-          top->imem_hready = 1;
-          break;
-        }
-        case NONSEQ: {
-          if (written) {
-            top->imem_hready = 0;
-          } else {
-            /* top->imem_hrdata = memread(top->imem_haddr, top->imem_hsize); */
-            top->imem_hrdata = riscv_sw(i, RISCV_X0, 0);
-            top->imem_hready = 1;
-            top->imem_hresp = 0;
-            written = true;
-          }
-          break;
-        }
-        default: {
-          exit(1);
-        }
-        }
-      }
-
-      if (top->clk) {
-
-        if (do_write) {
-          do_write = false;
-          if (haddr == 0x0) {
-            state.GPRs[i] = top->dmem_hwdata;
-            break;
-          } else {
-            assert(0);
-          }
-        }
-
-        switch (top->dmem_htrans) {
-        case IDLE: {
-          top->dmem_hresp = 0;
-          top->dmem_hready = 1;
-          break;
-        }
-        case NONSEQ: {
-          if (!top->dmem_hwrite) {
-            /* top->dmem_hrdata = memread(top->dmem_haddr, top->dmem_hsize); */
-            top->dmem_hrdata = rtl_read_mem(top->dmem_haddr, top->dmem_hsize);
-            top->dmem_hresp = 0;
-            top->dmem_hready = 1;
-          } else {
-            do_write = true;
-            haddr = top->dmem_haddr;
-            hsize = top->dmem_hsize;
-            top->dmem_hresp = 0;
-            top->dmem_hready = 1;
-          }
-          break;
-        }
-        default: {
-          exit(1);
-        }
-        }
-      }
-
-      top->clk = !top->clk;
-      top->eval();
-    }
-  }
-
   return state;
 }
 
@@ -415,74 +323,136 @@ void run_sail(void)
   }
 }
 
-void checkGPRs(state scr1_state) {
-  assert(scr1_state.GPRs[1] = zx1);
-  assert(scr1_state.GPRs[2] = zx2);
-  assert(scr1_state.GPRs[3] = zx3);
-  assert(scr1_state.GPRs[4] = zx4);
-  assert(scr1_state.GPRs[5] = zx5);
-  assert(scr1_state.GPRs[6] = zx6);
-  assert(scr1_state.GPRs[7] = zx7);
-  assert(scr1_state.GPRs[8] = zx8);
-  assert(scr1_state.GPRs[9] = zx9);
-  assert(scr1_state.GPRs[10] = zx10);
-  assert(scr1_state.GPRs[11] = zx11);
-  assert(scr1_state.GPRs[12] = zx12);
-  assert(scr1_state.GPRs[13] = zx13);
-  assert(scr1_state.GPRs[14] = zx14);
-  assert(scr1_state.GPRs[15] = zx15);
-  assert(scr1_state.GPRs[16] = zx16);
-  assert(scr1_state.GPRs[17] = zx17);
-  assert(scr1_state.GPRs[18] = zx18);
-  assert(scr1_state.GPRs[19] = zx19);
-  assert(scr1_state.GPRs[20] = zx20);
-  assert(scr1_state.GPRs[21] = zx21);
-  assert(scr1_state.GPRs[22] = zx22);
-  assert(scr1_state.GPRs[23] = zx23);
-  assert(scr1_state.GPRs[24] = zx24);
-  assert(scr1_state.GPRs[25] = zx25);
-  assert(scr1_state.GPRs[26] = zx26);
-  assert(scr1_state.GPRs[27] = zx27);
-  assert(scr1_state.GPRs[28] = zx28);
-  assert(scr1_state.GPRs[29] = zx29);
-  assert(scr1_state.GPRs[30] = zx30);
-  assert(scr1_state.GPRs[31] = zx31);
+bool checkGPRs(state scr1_state) {
+  if (scr1_state.GPRs[1] != zx1) {
+    return false;
+  }
+  if (scr1_state.GPRs[2] != zx2) {
+    return false;
+  }
+  if (scr1_state.GPRs[3] != zx3) {
+    return false;
+  }
+  if (scr1_state.GPRs[4] != zx4) {
+    return false;
+  }
+  if (scr1_state.GPRs[5] != zx5) {
+    return false;
+  }
+  if (scr1_state.GPRs[6] != zx6) {
+    return false;
+  }
+  if (scr1_state.GPRs[7] != zx7) {
+    return false;
+  }
+  if (scr1_state.GPRs[8] != zx8) {
+    return false;
+  }
+  if (scr1_state.GPRs[9] != zx9) {
+    return false;
+  }
+  if (scr1_state.GPRs[10] != zx10) {
+    return false;
+  }
+  if (scr1_state.GPRs[11] != zx11) {
+    return false;
+  }
+  if (scr1_state.GPRs[12] != zx12) {
+    return false;
+  }
+  if (scr1_state.GPRs[13] != zx13) {
+    return false;
+  }
+  if (scr1_state.GPRs[14] != zx14) {
+    return false;
+  }
+  if (scr1_state.GPRs[15] != zx15) {
+    return false;
+  }
+  if (scr1_state.GPRs[16] != zx16) {
+    return false;
+  }
+  if (scr1_state.GPRs[17] != zx17) {
+    return false;
+  }
+  if (scr1_state.GPRs[18] != zx18) {
+    return false;
+  }
+  if (scr1_state.GPRs[19] != zx19) {
+    return false;
+  }
+  if (scr1_state.GPRs[20] != zx20) {
+    return false;
+  }
+  if (scr1_state.GPRs[21] != zx21) {
+    return false;
+  }
+  if (scr1_state.GPRs[22] != zx22) {
+    return false;
+  }
+  if (scr1_state.GPRs[23] != zx23) {
+    return false;
+  }
+  if (scr1_state.GPRs[24] != zx24) {
+    return false;
+  }
+  if (scr1_state.GPRs[25] != zx25) {
+    return false;
+  }
+  if (scr1_state.GPRs[26] != zx26) {
+    return false;
+  }
+  if (scr1_state.GPRs[27] != zx27) {
+    return false;
+  }
+  if (scr1_state.GPRs[28] != zx28) {
+    return false;
+  }
+  if (scr1_state.GPRs[29] != zx29) {
+    return false;
+  }
+  if (scr1_state.GPRs[30] != zx30) {
+    return false;
+  }
+  if (scr1_state.GPRs[31] != zx31) {
+    return false;
+  }
+  return true;
 }
 
 int main(int argc, char **argv)
 {
-  insn_limit = 1;
-  uint32_t *inst = (uint32_t *)memory;
-  *inst = riscv_lui(RISCV_X1, 77);
+  insn_limit = 4;
+  uint32_t *inst = (uint32_t *)instr_memory;
+  *(inst) = riscv_addi(RISCV_X1, RISCV_X0, 11);
+  *(inst + 1) = riscv_sw(RISCV_X1, RISCV_X0, DATA_START);
+  *(inst + 2) = riscv_lw(RISCV_X2, RISCV_X0, DATA_START);
+  *(inst + 3) = riscv_add(RISCV_X1, RISCV_X1, RISCV_X2);
 
-  /* for (size_t i = 0; i < insn_limit; ++i) { */
-  /*   for (size_t j = 0; j < 4; ++j) { */
-  /*     unsigned char byte; */
-  /*     klee_make_symbolic(&byte, sizeof(byte), "byte"); */
-  /*     memory[j + (i * 4)] = byte; */
-  /*   } */
-  /* } */
-
-  for (size_t i = 0; i < MEMORY_LEN; ++i) {
-    write_mem(FETCH_START + i, memory[i]);
-    rtl_write_mem_byte(FETCH_START + i, memory[i]);
+  for (size_t i = 0; i < insn_limit * INSTR_BYTE_WIDTH; ++i) {
+    write_mem(INSTR_START + i, instr_memory[i]);
+    rtl_write_mem_byte(INSTR_START + i, instr_memory[i]);
   }
 
   // SCR1
   top = new Vtop_exp_ahb;
-  run_scr1();
-  state scr1_state = read_scr1_state();
+  state scr1_state = run_scr1();
 
   // SAIL
+  trace_log = stdout;
   model_init();
   zinit_model(UNIT);
-  rv_ram_base = FETCH_START;
-  rv_ram_size = FETCH_END - FETCH_START;
-  zPC = FETCH_START;
+  rv_rom_base = INSTR_START;
+  rv_rom_size = DATA_START - INSTR_START;
+  rv_ram_base = DATA_START;
+  rv_ram_size = DATA_START + 0x500;
+  zPC = INSTR_START;
   run_sail();
   model_fini();
 
-  checkGPRs(scr1_state);
+  if (checkGPRs(scr1_state)) {
+    fprintf(stderr, "ALL OK\n");
+  }
 
   return 0;
 }
