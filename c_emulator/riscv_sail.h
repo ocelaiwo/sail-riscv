@@ -23,6 +23,8 @@ bool zstep(sail_int);
 unit ztick_clock(unit);
 unit ztick_platform(unit);
 
+mach_bits zreadCSR(mach_bits);
+
 unit z_set_Misa_C(struct zMisa *, mach_bits);
 unit z_set_Misa_D(struct zMisa *, mach_bits);
 unit z_set_Misa_F(struct zMisa *, mach_bits);
