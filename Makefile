@@ -127,18 +127,16 @@ PLATFORM_OCAML_SRCS = $(addprefix ocaml_emulator/,platform.ml platform_impl.ml s
 SAIL_FLAGS += -dno_cast
 SAIL_DOC_FLAGS ?= -doc_embed plain
 
-# Attempt to work with either sail from opam or built from repo in SAIL_DIR
+# Force use of locally built sail
 ifneq ($(SAIL_DIR),)
-# Use sail repo in SAIL_DIR
 SAIL:=$(SAIL_DIR)/sail
 export SAIL_DIR
 EXPLICIT_COQ_SAIL=yes
 else
-# Use sail from opam package
-SAIL_DIR:=$(shell OPAMCLI=$(OPAMCLI) opam config var sail:share)
-SAIL:=sail
+$(error SAIL_DIR is not set)
 endif
-SAIL_LIB_DIR:=$(SAIL_DIR)/lib
+# Use the fixed precision version of the library
+SAIL_LIB_DIR:=$(SAIL_DIR)/lib/fixed
 export SAIL_LIB_DIR
 SAIL_SRC_DIR:=$(SAIL_DIR)/src
 
@@ -147,6 +145,16 @@ LEM_DIR:=$(shell OPAMCLI=$(OPAMCLI) opam config var lem:share)
 endif
 export LEM_DIR
 
+ifneq ($(LLVM_COMPILER_PATH),)
+LLVM_CC=$(LLVM_COMPILER_PATH)/clang
+LLVM_CXX=$(LLVM_COMPILER_PATH)/clang++
+LLVM_LINK=$(LLVM_COMPILER_PATH)/llvm-link
+else
+LLVM_CC=clang
+LLVM_CXX=clang++
+LLVM_LINK=llvm-link
+endif
+
 C_WARNINGS ?=
 #-Wall -Wextra -Wno-unused-label -Wno-unused-parameter -Wno-unused-but-set-variable -Wno-unused-function
 C_INCS = $(addprefix c_emulator/,riscv_prelude.h riscv_platform_impl.h riscv_platform.h riscv_softfloat.h)
@@ -154,19 +162,20 @@ C_SRCS = $(addprefix c_emulator/,riscv_prelude.c riscv_platform_impl.c riscv_pla
 
 SOFTFLOAT_DIR    = c_emulator/SoftFloat-3e
 SOFTFLOAT_INCDIR = $(SOFTFLOAT_DIR)/source/include
-SOFTFLOAT_LIBDIR = $(SOFTFLOAT_DIR)/build/Linux-RISCV-GCC
+SOFTFLOAT_LIBDIR = $(SOFTFLOAT_DIR)/build/Linux-x86_64-GCC
 SOFTFLOAT_FLAGS  = -I $(SOFTFLOAT_INCDIR)
 SOFTFLOAT_LIBS   = $(SOFTFLOAT_LIBDIR)/softfloat.a
-SOFTFLOAT_SPECIALIZE_TYPE = RISCV
+SOFTFLOAT_BCA    = $(SOFTFLOAT_LIBDIR)/softfloat.bca
 
-GMP_FLAGS = $(shell pkg-config --cflags gmp)
-# N.B. GMP does not have pkg-config metadata on Ubuntu 18.04 so default to -lgmp
-GMP_LIBS = $(shell pkg-config --libs gmp || echo -lgmp)
-ZLIB_FLAGS = $(shell pkg-config --cflags zlib)
-ZLIB_LIBS = $(shell pkg-config --libs zlib)
+ZLIB_DIR = c_emulator/zlib
+ZLIB_INCDIR = $(ZLIB_DIR)
+ZLIB_FLAGS = -I $(ZLIB_INCDIR)
+ZLIB_LIBS = $(ZLIB_DIR)/libz.a
+ZLIB_BCA = $(ZLIB_DIR)/libz.bca
 
-C_FLAGS = -I $(SAIL_LIB_DIR) -I c_emulator $(GMP_FLAGS) $(ZLIB_FLAGS) $(SOFTFLOAT_FLAGS)
-C_LIBS  = $(GMP_LIBS) $(ZLIB_LIBS) $(SOFTFLOAT_LIBS)
+C_FLAGS = -I $(SAIL_LIB_DIR) -I c_emulator $(ZLIB_FLAGS) $(SOFTFLOAT_FLAGS)
+C_LIBS  = $(ZLIB_LIBS) $(SOFTFLOAT_LIBS)
+C_BCA = $(ZLIB_BCA) $(SOFTFLOAT_BCA)
 
 # The C simulator can be built to be linked against Spike for tandem-verification.
 # This needs the C bindings to Spike from https://github.com/SRI-CSL/l3riscv
@@ -264,14 +273,35 @@ c_preserve_fns=-c_preserve _set_Misa_C
 
 generated_definitions/c/riscv_model_$(ARCH).c: $(SAIL_SRCS) model/main.sail Makefile
 	mkdir -p generated_definitions/c
-	$(SAIL) $(SAIL_FLAGS) $(c_preserve_fns) -O -Oconstant_fold -memo_z3 -c -c_include riscv_prelude.h -c_include riscv_platform.h -c_no_main $(SAIL_SRCS) model/main.sail -o $(basename $@)
+	$(SAIL) $(SAIL_FLAGS) $(c_preserve_fns) -O -Ofixed_int -Ofixed_bits -Oconstant_fold -memo_z3 -c -c_include riscv_prelude.h -c_include riscv_platform.h -c_no_main $(SAIL_SRCS) model/main.sail -o $(basename $@)
 
 generated_definitions/c2/riscv_model_$(ARCH).c: $(SAIL_SRCS) model/main.sail Makefile
 	mkdir -p generated_definitions/c2
 	$(SAIL) $(SAIL_FLAGS) -no_warn -memo_z3 -config c_emulator/config.json -c2 $(SAIL_SRCS) -o $(basename $@)
 
 $(SOFTFLOAT_LIBS):
-	$(MAKE) SPECIALIZE_TYPE=$(SOFTFLOAT_SPECIALIZE_TYPE) -C $(SOFTFLOAT_LIBDIR)
+	$(MAKE) -C $(SOFTFLOAT_LIBDIR)
+
+$(ZLIB_LIBS):
+	cd c_emulator && tar -xf zlib.tar.xz
+	cd $(ZLIB_DIR) && ./configure
+	$(MAKE) -C $(ZLIB_DIR)
+
+$(SOFTFLOAT_BCA): export CC = wllvm
+$(SOFTFLOAT_BCA): export DEBUG_FLAG=-g
+
+$(ZLIB_BCA): export CC = wllvm
+$(ZLIB_BCA): export CFLAGS=-g
+
+$(SOFTFLOAT_BCA):
+	$(MAKE) -C $(SOFTFLOAT_LIBDIR)
+	extract-bc $(SOFTFLOAT_LIBS)
+
+$(ZLIB_BCA):
+	cd c_emulator && tar -xf zlib.tar.xz
+	cd $(ZLIB_DIR) && ./configure
+	$(MAKE) -C $(ZLIB_DIR)
+	extract-bc $(ZLIB_LIBS)
 
 # convenience target
 .PHONY: csim
@@ -281,8 +311,13 @@ osim: ocaml_emulator/riscv_ocaml_sim_$(ARCH)
 .PHONY: rvfi
 rvfi: c_emulator/riscv_rvfi_$(ARCH)
 
-c_emulator/riscv_sim_$(ARCH): generated_definitions/c/riscv_model_$(ARCH).c $(C_INCS) $(C_SRCS) $(SOFTFLOAT_LIBS) Makefile
+c_emulator/riscv_sim_$(ARCH): generated_definitions/c/riscv_model_$(ARCH).c $(C_INCS) $(C_SRCS) $(SOFTFLOAT_LIBS) $(ZLIB_LIBS) Makefile
 	$(CC) -g $(C_WARNINGS) $(C_FLAGS) $< $(C_SRCS) $(SAIL_LIB_DIR)/*.c $(C_LIBS) -o $@
+
+c_emulator/riscv_sim_$(ARCH).bc: generated_definitions/c/riscv_model_$(ARCH).c $(C_INCS) $(C_SRCS) $(SOFTFLOAT_BCA) $(ZLIB_BCA) Makefile
+	$(LLVM_CC) -g -c $(C_WARNINGS) $(C_FLAGS) $< $(C_SRCS) $(SAIL_LIB_DIR)/*.c
+	$(LLVM_LINK) *.o $(SOFTFLOAT_BCA) $(ZLIB_BCA) -o $@
+
 
 # Note: We have to add -c_preserve since the functions might be optimized out otherwise
 rvfi_preserve_fns=-c_preserve rvfi_set_instr_packet \
@@ -485,6 +520,8 @@ clean:
 	-rm -rf generated_definitions/for-rmem/*
 	-$(MAKE) -C $(SOFTFLOAT_LIBDIR) clean
 	-rm -f c_emulator/riscv_sim_RV32 c_emulator/riscv_sim_RV64  c_emulator/riscv_rvfi_RV32 c_emulator/riscv_rvfi_RV64
+	-rm -f c_emulator/riscv_sim_RV32.bc c_emulator/riscv_sim_RV64.bc
+	-rm -rf c_emulator/zlib
 	-rm -rf ocaml_emulator/_sbuild ocaml_emulator/_build ocaml_emulator/riscv_ocaml_sim_RV32 ocaml_emulator/riscv_ocaml_sim_RV64 ocaml_emulator/tracecmp
 	-rm -f *.gcno *.gcda
 	-rm -f z3_problems

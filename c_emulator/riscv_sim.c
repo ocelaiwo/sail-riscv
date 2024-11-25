@@ -980,13 +980,11 @@ void run_sail(void)
 #endif
     { /* run a Sail step */
       sail_int sail_step;
-      CREATE(sail_int)(&sail_step);
-      CONVERT_OF(sail_int, mach_int)(&sail_step, step_no);
+      sail_step = CONVERT_OF(sail_int, mach_int)(step_no);
       stepped = zstep(sail_step);
       if (have_exception)
         goto step_exception;
       flush_logs();
-      KILL(sail_int)(&sail_step);
     }
     if (stepped) {
       step_no++;

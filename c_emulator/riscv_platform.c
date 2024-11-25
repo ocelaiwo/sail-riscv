@@ -170,7 +170,7 @@ unit plat_term_write(mach_bits s)
   return UNIT;
 }
 
-void plat_insns_per_tick(sail_int *rop, unit u) { }
+sail_int plat_insns_per_tick(unit u) { return 0; }
 
 mach_bits plat_htif_tohost(unit u)
 {
